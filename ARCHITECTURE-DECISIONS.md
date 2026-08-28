@@ -236,8 +236,9 @@ promoted to the user's active `Passkey` set only when that token is consumed.
   replacing or activating one another. The email owner chooses the credential
   by consuming the link produced by that same registration attempt.
 - Failed email delivery leaves the bounded, expiring pending attempt in place.
-  Deleting the shared unverified user can race a concurrent registration and
-  invalidate a link that was successfully delivered.
+  Deleting the shared unverified user right away, on delivery failure, can race a
+  concurrent registration and kill a link that was actually delivered. That rules
+  out deleting eagerly. It does not rule out the retention sweep below.
 
 **Implementation**:
 
@@ -253,12 +254,26 @@ promoted to the user's active `Passkey` set only when that token is consumed.
   the pending table and removes all active credentials from unverified users.
 - The resend cap bounds pending rows per unverified account; rows also expire
   with their verification tokens.
+- Retention (#9031): the daily cleanup job deletes expired pending registrations,
+  and unverified users older than `retentionMs` (45 days) that have nothing in
+  flight: no pending registration, no live token, no operations. Deleting them
+  this late is allowed, and it is what stops abandoned PII (email plus credential
+  public key) being kept forever. It also clears `verificationResendCount`, which
+  nothing else does, so an address that hits the resend cap is no longer stuck
+  for good.
+- One accepted race: `registerWithMagicLink` sends the email before saving the
+  new token, so a sweep during that send can kill a link that was already
+  delivered. Accepted because it fixes itself (the next attempt creates a fresh
+  row and a working link), the window is seconds wide, and the sweep runs once a
+  day. Revisit if registration ever stops recreating the row.
 
 **Key Files**:
 
 - [`auth.ts`](packages/super-sync-server/src/auth.ts)
 - [`passkey.ts`](packages/super-sync-server/src/passkey.ts)
 - [`schema.prisma`](packages/super-sync-server/prisma/schema.prisma)
+- [`cleanup.ts`](packages/super-sync-server/src/sync/cleanup.ts) — the retention sweep
+- [`sync.service.ts`](packages/super-sync-server/src/sync/sync.service.ts) — `deleteAbandonedUnverifiedUsers`
 
 **When to Update This Pattern**:
 

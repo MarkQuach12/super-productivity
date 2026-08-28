@@ -919,12 +919,18 @@ export class SyncService {
   }
 
   /**
-   * Delete unverified users created before `createdBefore` with no registration
-   * still in flight: no pending passkey registration row and no unexpired
-   * verification token (re-registering refreshes the token on the same row).
-   * Verified users can never match, and unverified users are denied auth, so
-   * nothing of value is lost when their related rows (operations, devices,
-   * sync state, passkeys, pending registrations) cascade on delete.
+   * Delete unverified users older than `createdBefore` that have nothing in
+   * flight: no pending passkey registration and no live verification token
+   * (re-registering refreshes the token on the same row).
+   *
+   * The `operations` check is a safety net. Unverified users cannot log in, so
+   * they should never have operations. But this delete cascades and cannot be
+   * undone, so we check rather than assume.
+   *
+   * Known race, accepted (see ADR #6): registerWithMagicLink sends the email
+   * before saving the new token, so a sweep during that send can delete a row
+   * whose link was already delivered. It fixes itself, since the next attempt
+   * creates a fresh row and a working link.
    */
   async deleteAbandonedUnverifiedUsers(createdBefore: number): Promise<number> {
     const result = await prisma.user.deleteMany({
@@ -932,6 +938,7 @@ export class SyncService {
         isVerified: 0,
         createdAt: { lt: new Date(createdBefore) },
         pendingPasskeyRegistrations: { none: {} },
+        operations: { none: {} },
         OR: [
           { verificationTokenExpiresAt: null },
           { verificationTokenExpiresAt: { lt: BigInt(Date.now()) } },

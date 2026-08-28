@@ -89,8 +89,10 @@ const runDailyCleanup = async (): Promise<void> => {
     Logger.error(`Cleanup [pending-passkeys] failed: ${error}`);
   }
 
-  // 6. Delete abandoned unverified users (never verified, no registration still
-  // in flight, older than the grace window; verified users can never match)
+  // 6. Delete abandoned unverified users (never verified, nothing in flight,
+  // older than the grace window; verified users can never match). This also
+  // resets verificationResendCount, which is intended: nothing else clears it,
+  // so an address that hits the resend cap would otherwise be stuck for good.
   try {
     const deleted = await syncService.deleteAbandonedUnverifiedUsers(
       Date.now() - UNVERIFIED_USER_GRACE_MS,

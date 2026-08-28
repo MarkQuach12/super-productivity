@@ -787,7 +787,8 @@ vi.mock('../src/db', async () => {
         }),
         update: vi.fn().mockResolvedValue({}),
         // Emulates exactly the where-shape deleteAbandonedUnverifiedUsers
-        // issues: isVerified equality, createdAt.lt, relation none, token OR.
+        // issues: isVerified equality, createdAt.lt, both relation `none`
+        // guards (pending registrations, operations), token OR.
         deleteMany: vi.fn().mockImplementation(async (args: any) => {
           const where = args.where ?? {};
           let deleted = 0;
@@ -806,6 +807,12 @@ vi.mock('../src/db', async () => {
                 state.pendingPasskeyRegistrations.values(),
               ).some((p: any) => p.userId === id);
               if (hasPending) continue;
+            }
+            if (where.operations?.none !== undefined) {
+              const hasOps = Array.from(state.operations.values()).some(
+                (op: any) => op.userId === id,
+              );
+              if (hasOps) continue;
             }
             if (where.OR !== undefined) {
               const matchesOr = where.OR.some((cond: any) => {
@@ -4276,6 +4283,11 @@ describe('SyncService', () => {
       });
       // Unverified with a magic-link re-registration in flight (live token)
       addUser(36, { verificationTokenExpiresAt: BigInt(Date.now() + dayMs) });
+      // Otherwise abandoned, but carrying operations. Should be unreachable —
+      // unverified users are denied auth — so the guard exists to make the
+      // irreversible cascade impossible rather than merely improbable.
+      addUser(37, {});
+      testState.operations.set('op-37', { id: 'op-37', userId: 37 });
 
       const deleted = await service.deleteAbandonedUnverifiedUsers(
         Date.now() - 45 * dayMs,
@@ -4288,6 +4300,7 @@ describe('SyncService', () => {
       expect(testState.users.has(34)).toBe(true);
       expect(testState.users.has(35)).toBe(true);
       expect(testState.users.has(36)).toBe(true);
+      expect(testState.users.has(37)).toBe(true);
     });
   });
 
